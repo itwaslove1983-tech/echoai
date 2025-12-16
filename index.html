@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Echo AI - 발음 교정 코치</title>
+    <style>
+        /* [디자인 영역] CSS 코드가 여기 들어갑니다 */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            min-height: 100vh; 
+            background-color: #f0f2f5; 
+            margin: 0; 
+        }
+        .container { 
+            background: white; 
+            padding: 2.5rem; 
+            border-radius: 20px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+            width: 90%; 
+            max-width: 500px; 
+            text-align: center; 
+        }
+        h1 { color: #2c3e50; margin-bottom: 0.5rem; }
+        p.desc { color: #7f8c8d; margin-bottom: 2rem; }
+        
+        input { 
+            width: 100%; 
+            padding: 12px; 
+            margin-bottom: 20px; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            box-sizing: border-box; /* 패딩 포함 너비 계산 */
+        }
+        
+        .practice-box {
+            background-color: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #e9ecef;
+        }
+        .sentence { 
+            font-size: 1.3rem; 
+            font-weight: bold; 
+            color: #2c3e50; 
+            margin: 10px 0; 
+            line-height: 1.4;
+        }
+
+        button { 
+            padding: 12px 24px; 
+            margin: 5px; 
+            border: none; 
+            border-radius: 50px; 
+            cursor: pointer; 
+            font-size: 1rem; 
+            font-weight: bold;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        button:active { transform: scale(0.98); }
+        #recordBtn { background-color: #e74c3c; color: white; }
+        #stopBtn { background-color: #3498db; color: white; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; opacity: 0.7; }
+        
+        .hidden { display: none; }
+        
+        /* 로딩 애니메이션 */
+        #loading { margin: 20px 0; color: #3498db; font-weight: bold; }
+        
+        /* 결과 화면 스타일 */
+        #result { margin-top: 30px; border-top: 2px solid #f0f0f0; padding-top: 20px; }
+        #scores { 
+            display: flex; 
+            justify-content: space-around; 
+            margin: 20px 0; 
+        }
+        .score-box {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .score-num { font-size: 1.5rem; font-weight: bold; color: #2980b9; }
+        .score-label { font-size: 0.8rem; color: #7f8c8d; }
+
+        .feedback-item { 
+            background: #fff3cd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-left: 5px solid #f1c40f; 
+            text-align: left; 
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        .ai-comment {
+            font-style: italic;
+            color: #555;
+            margin-bottom: 15px;
+            background-color: #e8f6f3;
+            padding: 10px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Echo AI 🎙️</h1>
+        <p class="desc">AI 쉐도잉 & 발음 교정 코치</p>
+        
+        <input type="password" id="apiKey" placeholder="Google API Key를 입력하세요 (저장되지 않음)">
+        
+        <div class="practice-box">
+            <div style="color: #888; font-size: 0.9rem; margin-bottom:5px;">오늘의 문장</div>
+            <p id="targetSentence" class="sentence">"I think we should take a break explicitly."</p>
+        </div>
+
+        <div class="controls">
+            <button id="recordBtn">🔴 녹음 시작</button>
+            <button id="stopBtn" disabled>⏹️ 종료 및 분석</button>
+        </div>
+
+        <div id="loading" class="hidden">
+            🤖 Gemini가 듣고 분석 중입니다...<br>(약 3~5초 소요)
+        </div>
+        
+        <div id="result" class="hidden">
+            <h3>📊 분석 결과</h3>
+            <div id="scores"></div>
+            <div id="feedback"></div>
+        </div>
+    </div>
+
+    <script>
+        // [기능 영역] JavaScript 코드가 여기 들어갑니다
+        let mediaRecorder;
+        let audioChunks = [];
+
+        const recordBtn = document.getElementById('recordBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const resultDiv = document.getElementById('result');
+        const loadingDiv = document.getElementById('loading');
+        const scoresDiv = document.getElementById('scores');
+        const feedbackDiv = document.getElementById('feedback');
+
+        // 1. 녹음 시작
+        recordBtn.addEventListener('click', async () => {
+            const apiKey = document.getElementById('apiKey').value;
+            if (!apiKey) { alert("먼저 Google API Key를 입력해주세요!"); return; }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' }); // webm or mp3
+                    await sendToGemini(audioBlob);
+                };
+
+                mediaRecorder.start();
+                recordBtn.disabled = true;
+                stopBtn.disabled = false;
+                resultDiv.classList.add('hidden');
+                recordBtn.innerText = "녹음 중...";
+            } catch (err) {
+                alert("마이크 권한이 필요합니다: " + err);
+            }
+        });
+
+        // 2. 녹음 종료
+        stopBtn.addEventListener('click', () => {
+            mediaRecorder.stop();
+            recordBtn.disabled = false;
+            stopBtn.disabled = true;
+            recordBtn.innerText = "🔴 녹음 시작";
+        });
+
+        // 3. 오디오 파일을 Base64로 변환
+        function blobToBase64(blob) {
+            return new Promise((resolve, _) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        // 4. Gemini에게 전송
+        async function sendToGemini(audioBlob) {
+            const apiKey = document.getElementById('apiKey').value;
+            loadingDiv.classList.remove('hidden');
+            
+            const base64Audio = await blobToBase64(audioBlob);
+            const targetSentence = document.getElementById('targetSentence').innerText;
+
+            const prompt = `
+            다음 오디오는 사용자가 영어 문장 "${targetSentence}"를 쉐도잉(따라 말하기)한 것입니다.
+            원어민 영어 교사로서 발음(Pronunciation), 억양(Intonation), 유창성(Fluency)을 엄격하게 평가해주세요.
+            
+            반드시 아래 JSON 형식으로만 답변해주세요 (마크다운 없이 순수 JSON만):
+            {
+                "scores": {
+                    "pronunciation": 0,
+                    "intonation": 0,
+                    "fluency": 0
+                },
+                "feedback_summary": "전체적인 총평 한 문장 (한국어로)",
+                "details": [
+                    "구체적인 교정 사항 1 (한국어로)",
+                    "구체적인 교정 사항 2 (한국어로)"
+                ]
+            }
+            `;
+
+            try {
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: prompt },
+                                { inline_data: { mime_type: "audio/mp3", data: base64Audio } }
+                            ]
+                        }]
+                    })
+                });
+
+                const data = await response.json();
+                
+                // 응답 파싱 (JSON 포맷팅 제거)
+                let rawText = data.candidates[0].content.parts[0].text;
+                rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+                
+                const aiResponse = JSON.parse(rawText);
+                displayResult(aiResponse);
+
+            } catch (error) {
+                alert("분석 중 오류가 발생했습니다. API 키를 확인하거나 콘솔을 확인하세요.\n" + error);
+                console.error(error);
+            } finally {
+                loadingDiv.classList.add('hidden');
+            }
+        }
+
+        // 5. 결과 화면 표시
+        function displayResult(data) {
+            resultDiv.classList.remove('hidden');
+            
+            scoresDiv.innerHTML = `
+                <div class="score-box"><span class="score-num">${data.scores.pronunciation}</span><span class="score-label">발음</span></div>
+                <div class="score-box"><span class="score-num">${data.scores.intonation}</span><span class="score-label">억양</span></div>
+                <div class="score-box"><span class="score-num">${data.scores.fluency}</span><span class="score-label">유창성</span></div>
+            `;
+            
+            let feedbackHtml = `<div class="ai-comment">" ${data.feedback_summary} "</div>`;
+            data.details.forEach(item => {
+                feedbackHtml += `<div class="feedback-item">💡 ${item}</div>`;
+            });
+            feedbackDiv.innerHTML = feedbackHtml;
+        }
+    </script>
+</body>
+</html>
